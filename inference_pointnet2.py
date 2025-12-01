@@ -1,3 +1,4 @@
+import argparse
 import os
 
 import numpy as np
@@ -7,8 +8,8 @@ from sklearn.metrics import confusion_matrix, recall_score
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from pointnet2 import PointNet2
 from semanticstf_dataset_v2 import SemanticSTFDataset
+from pointnet2 import PointNet2
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -31,9 +32,9 @@ def load_pointcloud(filepath):
 
         # intensity を 0~1 に正規化
         pc[:, 3] = pc[:, 3] / 255.0
-
+        
         # range を計算して追加
-        range_vals = np.sqrt(pc[:, 0] ** 2 + pc[:, 1] ** 2 + pc[:, 2] ** 2)
+        range_vals = np.sqrt(pc[:, 0]**2 + pc[:, 1]**2 + pc[:, 2]**2)
         range_vals = range_vals.reshape(-1, 1)
         pc = np.concatenate([pc, range_vals], axis=1)  # (N, 5)
 
@@ -42,13 +43,13 @@ def load_pointcloud(filepath):
         if pc.shape[1] < 4:
             raise ValueError("npy file must have at least 4 channels (x,y,z,intensity)")
         pc = pc[:, :4].astype(np.float32)
-
+        
         # .npyでintensityが0~255のままの可能性が高いので正規化
         if pc[:, 3].max() > 1.1:
             pc[:, 3] = pc[:, 3] / 255.0
-
+        
         # range を計算して追加
-        range_vals = np.sqrt(pc[:, 0] ** 2 + pc[:, 1] ** 2 + pc[:, 2] ** 2)
+        range_vals = np.sqrt(pc[:, 0]**2 + pc[:, 1]**2 + pc[:, 2]**2)
         range_vals = range_vals.reshape(-1, 1)
         pc = np.concatenate([pc, range_vals], axis=1)  # (N, 5)
 
@@ -85,46 +86,46 @@ def sample_points(pc, num_points=32768):
 def evaluate_test_set(model, test_loader, device):
     """
     テストデータセットに対して推論を実行し、混同行列と再現率を計算
-
+    
     Args:
         model: 学習済みモデル
         test_loader: テストデータのDataLoader
         device: 実行デバイス (cuda/cpu)
-
+    
     Returns:
         conf_matrix: 混同行列 (2x2 numpy array)
         recall: 再現率 (float)
     """
     model.eval()
-
+    
     all_preds = []
     all_labels = []
-
+    
     print("\n=== テストデータでの評価を開始 ===")
-
+    
     with torch.no_grad():
         for points, labels in tqdm(test_loader, desc="推論中", unit="batch"):
             points = points.to(device)  # (B, N, 5)
             labels = labels.to(device)  # (B, N)
-
+            
             # モデルの推論
             logits = model(points)  # (B, N, 2)
             preds = logits.argmax(dim=-1)  # (B, N)
-
+            
             # バッチ内の全点を収集
             all_preds.append(preds.cpu().numpy().flatten())
             all_labels.append(labels.cpu().numpy().flatten())
-
+    
     # 全データを結合
     all_preds = np.concatenate(all_preds)
     all_labels = np.concatenate(all_labels)
-
+    
     # 混同行列を計算
     conf_matrix = confusion_matrix(all_labels, all_preds, labels=[0, 1])
-
+    
     # 再現率を計算 (クラス1=ノイズ点に対する再現率)
     recall = recall_score(all_labels, all_preds, pos_label=1, zero_division=0)
-
+    
     return conf_matrix, recall
 
 
@@ -134,44 +135,40 @@ def evaluate_test_set(model, test_loader, device):
 def print_evaluation_results(conf_matrix, recall):
     """
     混同行列と再現率を見やすく表示
-
+    
     Args:
         conf_matrix: 混同行列 (2x2 numpy array)
         recall: 再現率 (float)
     """
-    print("\n" + "=" * 50)
+    print("\n" + "="*50)
     print("評価結果")
-    print("=" * 50)
-
+    print("="*50)
+    
     print("\n【混同行列】")
     print("                予測")
     print("              0 (正常)  1 (ノイズ)")
     print(f"実際 0 (正常)   {conf_matrix[0, 0]:8d}  {conf_matrix[0, 1]:8d}")
     print(f"     1 (ノイズ) {conf_matrix[1, 0]:8d}  {conf_matrix[1, 1]:8d}")
-
+    
     # 各指標を計算
     tn, fp, fn, tp = conf_matrix.ravel()
-
+    
     accuracy = (tp + tn) / (tp + tn + fp + fn) if (tp + tn + fp + fn) > 0 else 0
     precision = tp / (tp + fp) if (tp + fp) > 0 else 0
-    f1_score = (
-        2 * (precision * recall) / (precision + recall)
-        if (precision + recall) > 0
-        else 0
-    )
-
+    f1_score = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
+    
     print("\n【評価指標】")
     print(f"Accuracy (精度):     {accuracy:.4f} ({accuracy*100:.2f}%)")
     print(f"Recall (再現率):     {recall:.4f} ({recall*100:.2f}%)")
     print(f"Precision (適合率):  {precision:.4f} ({precision*100:.2f}%)")
     print(f"F1 Score:           {f1_score:.4f}")
-
+    
     print("\n【詳細統計】")
     print(f"True Positives (TP):  {tp:8d}  (ノイズを正しくノイズと予測)")
     print(f"True Negatives (TN):  {tn:8d}  (正常を正しく正常と予測)")
     print(f"False Positives (FP): {fp:8d}  (正常を誤ってノイズと予測)")
     print(f"False Negatives (FN): {fn:8d}  (ノイズを誤って正常と予測)")
-    print("=" * 50 + "\n")
+    print("="*50 + "\n")
 
 
 # ============================
@@ -193,7 +190,7 @@ def run_inference(
 
     # モデルの読み込み
     print(f"\nモデルを読み込み中: {checkpoint}")
-    model = PointNet2(in_dim=5, num_classes=2).to(device)
+    model = PointNet2(in_dim=5, num_classes=2, num_points=num_points).to(device)
     model.load_state_dict(torch.load(checkpoint, map_location=device))
     model.eval()
     print("モデルの読み込み完了")
@@ -233,4 +230,5 @@ def run_inference(
 
 
 if __name__ == "__main__":
+    # argparse を完全に削除して、直接デフォルト値で呼び出し
     run_inference()

@@ -3,7 +3,10 @@ checkpoints
 data_organiza
 SemanticSTF
 v0
-v1.ipynb
+uv.lock
+pyproject.toml
+*.zip
+
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -57,6 +60,8 @@ coverage.xml
 .hypothesis/
 .pytest_cache/
 cover/
+.python-version
+environment.yml
 
 # Translations
 *.mo
