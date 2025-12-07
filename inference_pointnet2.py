@@ -177,8 +177,8 @@ def print_evaluation_results(conf_matrix, recall):
 def run_inference(
     data_root: str = "./SemanticSTF",
     checkpoint: str = "checkpoints/pointnet2_best.pth",
-    num_points: int = 32768,
-    batch_size: int = 4,
+    num_points: int = 16384,
+    batch_size: int = 2,
     num_workers: int = 4,
     save_results: bool = False,
     output_path: str = "results/test_results.txt",

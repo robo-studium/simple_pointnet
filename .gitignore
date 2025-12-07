@@ -6,7 +6,8 @@ v0
 uv.lock
 pyproject.toml
 *.zip
-
+results
+stat
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
