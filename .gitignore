@@ -1,3 +1,8 @@
+WADS/
+checkpoints_pointnet++/
+results_pointnet++/
+simple_pointnet.code-workspace
+
 ipynb_checkpoints
 checkpoints
 data_organiza
