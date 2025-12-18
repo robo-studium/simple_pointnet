@@ -177,6 +177,45 @@ class UNetDenoiser(nn.Module):
         logits = self.outc(x)
         return logits
 
+    def forward_with_features(self, x):
+        """
+        Forward pass with intermediate features for knowledge distillation
+        
+        Returns:
+            dict: {
+                'logits': final output (B, 2, H, W)
+                'x2': encoder stage 1 output (B, 128, H/2, W/2)
+                'x3': encoder stage 2 output (B, 256, H/4, W/4)
+                'x4': encoder stage 3 output (B, 512, H/8, W/8)
+                'x5': bottleneck output with attention (B, 1024, H/16, W/16)
+            }
+        """
+        # Encoder
+        x1 = self.inc(x)
+        x2 = self.down1(x1)
+        x3 = self.down2(x2)
+        x4 = self.down3(x3)
+        x5 = self.down4(x4)
+        
+        # Bottleneck Attention (IMPORTANT: Apply attention before returning features)
+        x5 = self.bottleneck_attn(x5)
+        
+        # Decoder
+        x = self.up1(x5, x4)
+        x = self.up2(x, x3)
+        x = self.up3(x, x2)
+        x = self.up4(x, x1)
+        
+        logits = self.outc(x)
+        
+        return {
+            'logits': logits,
+            'x2': x2,
+            'x3': x3,
+            'x4': x4,
+            'x5': x5,  # This includes the attention-enhanced features
+        }
+
 
 # =================================================
 # Test
@@ -192,10 +231,20 @@ if __name__ == "__main__":
     )
 
     x = torch.randn(2, 5, 64, 1024)
+    
+    # Test standard forward
     y = model(x)
-
     print("Input shape:", x.shape)
     print("Output shape:", y.shape)
+    
+    # Test forward_with_features
+    features = model.forward_with_features(x)
+    print("\nForward with features:")
+    print(f"Logits shape: {features['logits'].shape}")
+    print(f"x2 shape: {features['x2'].shape}")
+    print(f"x3 shape: {features['x3'].shape}")
+    print(f"x4 shape: {features['x4'].shape}")
+    print(f"x5 shape: {features['x5'].shape}")
 
     total_params = sum(p.numel() for p in model.parameters())
-    print(f"Total parameters: {total_params / 1e6:.2f}M")
+    print(f"\nTotal parameters: {total_params / 1e6:.2f}M")

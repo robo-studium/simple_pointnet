@@ -31,6 +31,7 @@ u-net.ipynb
 splits-dense.json
 splits_ssl.json
 range-image.ipynb
+outputs_student
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
