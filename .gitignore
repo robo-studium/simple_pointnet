@@ -12,7 +12,25 @@ uv.lock
 pyproject.toml
 *.zip
 results
-stat
+stat_semanticSTF
+stat_wads
+outputs
+evaluation_results
+range_IMG_generation
+timing_results
+transformer_raw_pcd
+outputs2
+inference_outputs
+7-channels
+DENSE
+outputs_7_channels
+outputs_u_net_only
+KITTI
+vision_transformer.ipynb
+u-net.ipynb
+splits-dense.json
+splits_ssl.json
+range-image.ipynb
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
