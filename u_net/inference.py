@@ -7,8 +7,8 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
-from data_loader_stf import VelodyneRangeProjection, create_dataloaders
-from model import UNetDenoiser
+from data_loader import VelodyneRangeProjection, create_dataloaders
+from model_unet_trans import UNetDenoiser
 
 
 def visualize_prediction(input_img, label_img, pred_img, mask, save_path=None):
@@ -116,7 +116,155 @@ def save_denoised_pointcloud(input_path, pred_mask, proj_idx, output_path):
     print(f"Removed {len(points) - len(denoised_points)} noise points")
 
 
+
 def evaluate_model(model, dataloader, device, output_dir, save_visualizations=True):
+    """Evaluate model on dataset"""
+    model.eval()
+
+    os.makedirs(output_dir, exist_ok=True)
+    vis_dir = os.path.join(output_dir, "visualizations")
+    os.makedirs(vis_dir, exist_ok=True)
+
+    all_metrics = []
+
+    # 混同行列用の累積変数
+    total_tp = total_tn = total_fp = total_fn = 0
+
+    with torch.no_grad():
+        pbar = tqdm(dataloader, desc="Inference")
+
+        for i, batch in enumerate(pbar):
+            inputs = batch["input"].to(device)
+            labels = batch["label"].to(device)
+            masks = batch["mask"].to(device)
+            paths = batch["path"]
+
+            # Forward
+            outputs = model(inputs)
+            preds = torch.argmax(outputs, dim=1)
+
+            # Compute metrics for each sample in batch
+            batch_size = inputs.shape[0]
+            for b in range(batch_size):
+                pred = preds[b]
+                label = labels[b]
+                mask = masks[b]
+
+                # Compute metrics
+                mask_flat = mask.flatten().cpu().numpy() > 0
+                pred_flat = pred.flatten().cpu().numpy()[mask_flat]
+                label_flat = label.flatten().cpu().numpy()[mask_flat]
+
+                if len(pred_flat) > 0:
+                    accuracy = (pred_flat == label_flat).mean()
+
+                    # True/False positives/negatives
+                    tp = ((pred_flat == 1) & (label_flat == 1)).sum()
+                    tn = ((pred_flat == 0) & (label_flat == 0)).sum()
+                    fp = ((pred_flat == 1) & (label_flat == 0)).sum()
+                    fn = ((pred_flat == 0) & (label_flat == 1)).sum()
+
+                    # 全体の混同行列に累積
+                    total_tp += tp
+                    total_tn += tn
+                    total_fp += fp
+                    total_fn += fn
+
+                    precision = tp / (tp + fp + 1e-6)
+                    recall = tp / (tp + fn + 1e-6)
+                    f1 = 2 * precision * recall / (precision + recall + 1e-6)
+
+                    iou_noise = tn / (tn + fp + fn + 1e-6)
+                    iou_clean = tp / (tp + fp + fn + 1e-6)
+
+                    # Count noise/clean
+                    pred_noise = (pred_flat == 0).sum()
+                    pred_clean = (pred_flat == 1).sum()
+                    label_noise = (label_flat == 0).sum()
+                    label_clean = (label_flat == 1).sum()
+
+                    metrics = {
+                        "accuracy": accuracy,
+                        "precision": precision,
+                        "recall": recall,
+                        "f1": f1,
+                        "iou_noise": iou_noise,
+                        "iou_clean": iou_clean,
+                        "pred_noise": pred_noise,
+                        "pred_clean": pred_clean,
+                        "label_noise": label_noise,
+                        "label_clean": label_clean,
+                    }
+
+                    all_metrics.append(metrics)
+
+                    # Save visualization
+                    if save_visualizations and i < 10:
+                        vis_path = os.path.join(vis_dir, f"sample_{i:04d}_{b:02d}.png")
+                        visualize_prediction(
+                            inputs[b], labels[b], preds[b], masks[b], save_path=vis_path
+                        )
+
+    # Aggregate metrics
+    if len(all_metrics) > 0:
+        avg_metrics = {}
+        for key in all_metrics[0].keys():
+            avg_metrics[key] = np.mean([m[key] for m in all_metrics])
+
+        # === 混同行列の出力 ===
+        total_pixels = total_tp + total_tn + total_fp + total_fn
+        confusion_matrix = np.array([[total_tn, total_fp],
+                                     [total_fn, total_tp]])
+
+        # 正規化版（行方向＝実際のクラスに対する正解率）
+        confusion_matrix_norm = confusion_matrix.astype('float') / (confusion_matrix.sum(axis=1)[:, np.newaxis] + 1e-6)
+
+        print("\n" + "=" * 60)
+        print("Evaluation Results")
+        print("=" * 60)
+        print(f"Total valid pixels: {total_pixels:,}")
+        print("\nConfusion Matrix (Noise=0, Clean=1):")
+        print("                Predicted")
+        print("                Noise    Clean")
+        print(f"Actual Noise   {total_tn:8,}  {total_fp:8,}")
+        print(f"Actual Clean   {total_fn:8,}  {total_tp:8,}")
+
+        print("\nNormalized Confusion Matrix (row-wise):")
+        print("                Predicted")
+        print("                Noise    Clean")
+        print(f"Actual Noise   {confusion_matrix_norm[0,0]:.4f}    {confusion_matrix_norm[0,1]:.4f}")
+        print(f"Actual Clean   {confusion_matrix_norm[1,0]:.4f}    {confusion_matrix_norm[1,1]:.4f}")
+
+        print("\nPer-class Accuracy:")
+        print(f"  Noise Accuracy (TN / (TN+FP)): {total_tn / (total_tn + total_fp + 1e-6):.4f}")
+        print(f"  Clean Accuracy (TP / (TP+FN)): {total_tp / (total_tp + total_fn + 1e-6):.4f}")
+
+        print("\nOther Metrics:")
+        print(f"Accuracy:  {avg_metrics['accuracy']:.4f}")
+        print(f"Precision (Clean): {avg_metrics['precision']:.4f}")
+        print(f"Recall    (Clean): {avg_metrics['recall']:.4f}")
+        print(f"F1 Score  (Clean): {avg_metrics['f1']:.4f}")
+        print(f"IoU Noise:         {avg_metrics['iou_noise']:.4f}")
+        print(f"IoU Clean:         {avg_metrics['iou_clean']:.4f}")
+        print(f"Avg Predicted Noise: {avg_metrics['pred_noise']:.0f}")
+        print(f"Avg Predicted Clean: {avg_metrics['pred_clean']:.0f}")
+        print(f"Avg GT Noise:        {avg_metrics['label_noise']:.0f}")
+        print(f"Avg GT Clean:        {avg_metrics['label_clean']:.0f}")
+        print("=" * 60)
+
+        # メトリクス保存（混同行列も追加）
+        with open(os.path.join(output_dir, "metrics.txt"), "w") as f:
+            f.write("Confusion Matrix:\n")
+            f.write(f"TN: {total_tn}\n")
+            f.write(f"FP: {total_fp}\n")
+            f.write(f"FN: {total_fn}\n")
+            f.write(f"TP: {total_tp}\n\n")
+            for key, value in avg_metrics.items():
+                f.write(f"{key}: {value}\n")
+
+        return avg_metrics
+
+    return None
     """Evaluate model on dataset"""
     model.eval()
 
@@ -310,7 +458,7 @@ def main(args):
         print("Loading test data...")
         _, _, test_loader = create_dataloaders(
             args.data_root,
-            # args.splits_json,
+            args.splits_json,
             batch_size=args.batch_size,
             num_workers=args.num_workers,
             proj_H=args.proj_h,
@@ -377,9 +525,9 @@ if __name__ == "__main__":
     )
 
     # Data
-    parser.add_argument("--data_root", type=str, default="./SemanticSTF")
-    # parser.add_argument("--splits_json", type=str, default="./splits.json")
-    parser.add_argument("--noise_label", type=int, default=20)
+    parser.add_argument("--data_root", type=str, default="./WADS/wads")
+    parser.add_argument("--splits_json", type=str, default="./splits.json")
+    parser.add_argument("--noise_label", type=int, default=110)
 
     # Model (U-Net specific)
     parser.add_argument("--proj_h", type=int, default=64)

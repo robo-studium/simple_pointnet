@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+from itertools import product  # 追加
 
 import numpy as np
 import torch
@@ -106,6 +107,7 @@ class RangeImageBackProjection:
 
 
 def evaluate_pointcloud_predictions(pred_labels, gt_labels, noise_label=250):
+
     """
     Evaluate point cloud predictions
 
@@ -180,16 +182,14 @@ def evaluate_pointcloud_predictions(pred_labels, gt_labels, noise_label=250):
 
     return metrics, cm
 
-def evaluate_test_set(model, test_dataset, device, args, output_dir):
-    """Evaluate model on test set with back-projection"""
 
+def evaluate_with_knn_params(
+    model, dataset, device, args, output_dir, k_values=[3, 5, 7, 9, 11], weight_options=['uniform', 'distance']
+):
+    """
+    複数のkとweightsの組み合わせを検証し、最適なハイパーパラメータを探索
+    """
     model.eval()
-
-    all_metrics = []
-    sequence_metrics = {}
-    # 混同行列を蓄積するための変数（全体用）
-    total_cm = np.zeros((2, 2), dtype=int)
-    sequence_cm = {}  # シーケンスごとの混同行列
 
     projector = VelodyneRangeProjection(
         args.proj_h, args.proj_w, args.fov_up, args.fov_down
@@ -198,190 +198,208 @@ def evaluate_test_set(model, test_dataset, device, args, output_dir):
         args.proj_h, args.proj_w, args.fov_up, args.fov_down
     )
 
-    print("Evaluating test set with back-projection...")
+    results = []
 
-    with torch.no_grad():
-        for idx in tqdm(range(len(test_dataset)), desc="Processing"):
-            sample = test_dataset[idx]
-            inputs = sample["input"].unsqueeze(0).to(device)
-            sequence = sample["sequence"]
-            bin_path = sample["path"]
+    print("\n" + "="*80)
+    print("KNN HYPERPARAMETER SEARCH ON VALIDATION SET")
+    print("="*80)
+    print(f"Testing k values: {k_values}")
+    print(f"Testing weights: {weight_options}")
+    print(f"Dataset size: {len(dataset)} samples")
+    print("="*80)
 
-            points = np.fromfile(bin_path, dtype=np.float32).reshape(-1, 4)
-            xyz = points[:, :3]
-            intensity = points[:, 3]
+    best_f1 = 0.0
+    best_params = None
+    best_metrics = None
 
-            label_path = bin_path.replace(".bin", ".label").replace("velodyne", "labels")
-            gt_labels = np.fromfile(label_path, dtype=np.uint32)
-            gt_labels = gt_labels & 0xFFFF
+    # すべての組み合わせを試す
+    for k, weights in product(k_values, weight_options):
+        print(f"\nTesting: k={k}, weights='{weights}'")
 
-            proj_range, proj_xyz, proj_intensity, proj_mask, proj_idx = (
-                projector.project(xyz, intensity)
-            )
+        all_metrics = []
 
-            outputs = model(inputs)
-            pred_img = torch.argmax(outputs, dim=1)[0].cpu().numpy()
+        with torch.no_grad():
+            for idx in tqdm(range(len(dataset)), desc=f"k={k}, weights={weights}", leave=False):
+                sample = dataset[idx]
+                inputs = sample["input"].unsqueeze(0).to(device)
+                bin_path = sample["path"]
 
-            if args.use_knn:
-                point_preds = back_projector.back_project_with_knn(
-                    pred_img, proj_xyz, proj_idx, proj_mask, xyz, k=args.knn_k
+                # Load point cloud
+                points = np.fromfile(bin_path, dtype=np.float32).reshape(-1, 4)
+                xyz = points[:, :3]
+                intensity = points[:, 3]
+
+                # Load GT labels
+                label_path = bin_path.replace(".bin", ".label").replace("velodyne", "labels")
+                gt_labels = np.fromfile(label_path, dtype=np.uint32) & 0xFFFF
+
+                # Project
+                proj_range, proj_xyz, proj_intensity, proj_mask, proj_idx = projector.project(xyz, intensity)
+
+                # Model inference
+                outputs = model(inputs)
+                pred_img = torch.argmax(outputs, dim=1)[0].cpu().numpy()
+
+                # Back-project with custom KNN (weights対応版)
+                point_preds = back_project_with_knn_weighted(
+                    pred_img, proj_xyz, proj_idx, proj_mask, xyz,
+                    k=k, weights=weights
                 )
-            else:
-                point_preds = back_projector.back_project_with_mapping(
-                    pred_img, proj_idx, len(xyz)
-                )
 
-            metrics, cm = evaluate_pointcloud_predictions(
-                point_preds, gt_labels, noise_label=args.noise_label
-            )
+                # Evaluate
+                metrics, _ = evaluate_pointcloud_predictions(point_preds, gt_labels, noise_label=args.noise_label)
+                all_metrics.append(metrics)
 
-            # 混同行列を蓄積
-            total_cm += cm
-            if sequence not in sequence_cm:
-                sequence_cm[sequence] = np.zeros((2, 2), dtype=int)
-            sequence_cm[sequence] += cm
+        # Average metrics for this parameter set
+        avg_metrics = {k: np.mean([m[k] for m in all_metrics]) for k in all_metrics[0].keys() if isinstance(all_metrics[0][k], (int, float))}
 
-            all_metrics.append(metrics)
-            if sequence not in sequence_metrics:
-                sequence_metrics[sequence] = []
-            sequence_metrics[sequence].append(metrics)
+        noise_f1 = avg_metrics['noise_f1']
+        results.append({
+            'k': k,
+            'weights': weights,
+            'noise_f1': noise_f1,
+            'noise_detection_rate': avg_metrics['noise_detection_rate'],
+            'iou_noise': avg_metrics['iou_noise'],
+            'clean_f1': avg_metrics['clean_f1'],
+            'accuracy': avg_metrics['accuracy']
+        })
 
-            if args.save_predictions:
-                pred_dir = os.path.join(output_dir, "predictions", str(sequence))
-                os.makedirs(pred_dir, exist_ok=True)
-                pred_file = os.path.join(
-                    pred_dir, os.path.basename(bin_path).replace(".bin", ".pred")
-                )
-                point_preds.astype(np.uint32).tofile(pred_file)
+        print(f"  → Noise F1: {noise_f1:.4f} | Clean F1: {avg_metrics['clean_f1']:.4f} | IoU Noise: {avg_metrics['iou_noise']:.4f}")
 
-    # 結果表示（混同行列を追加）
-    print("\n" + "=" * 70)
-    print("POINT CLOUD EVALUATION RESULTS")
-    print("=" * 70)
+        # Update best
+        if noise_f1 > best_f1:
+            best_f1 = noise_f1
+            best_params = (k, weights)
+            best_metrics = avg_metrics
 
-    avg_metrics = {}
-    for key in all_metrics[0].keys():
-        if isinstance(all_metrics[0][key], (int, float)):
-            avg_metrics[key] = np.mean([m[key] for m in all_metrics])
+    # Final results table
+    print("\n" + "="*80)
+    print("HYPERPARAMETER SEARCH RESULTS")
+    print("="*80)
+    print(f"{'k':>4} | {'weights':<10} | {'Noise F1':>10} | {'Clean F1':>10} | {'IoU Noise':>10} | {'Accuracy':>10}")
+    print("-"*80)
+    for r in sorted(results, key=lambda x: x['noise_f1'], reverse=True):
+        print(f"{r['k']:4d} | {r['weights']:<10} | {r['noise_f1']:10.4f} | {r['clean_f1']:10.4f} | {r['iou_noise']:10.4f} | {r['accuracy']:10.4f}")
 
-    print("\n--- Overall Metrics ---")
-    print(f"Total samples: {len(all_metrics)}")
-    print(f"Accuracy: {avg_metrics['accuracy']:.4f}")
-    print(f"\n--- Overall Confusion Matrix (Noise: 0, Clean: 1) ---")
-    print("          Predicted")
-    print("          Noise    Clean")
-    print("Actual Noise   {:6d}   {:6d}".format(total_cm[0,0], total_cm[0,1]))
-    print("      Clean   {:6d}   {:6d}".format(total_cm[1,0], total_cm[1,1]))
-    print(f"  (TN={total_cm[0,0]}, FP={total_cm[0,1]}, FN={total_cm[1,0]}, TP={total_cm[1,1]})")
+    print("-"*80)
+    print(f"BEST PARAMETERS: k={best_params[0]}, weights='{best_params[1]}' → Noise F1 = {best_f1:.4f}")
 
-    print(f"\n--- Noise Detection ---")
-    print(f"Noise Detection Rate (Recall): {avg_metrics['noise_detection_rate']:.4f}")
-    print(f"Noise Precision: {avg_metrics['noise_precision']:.4f}")
-    print(f"Noise F1-Score: {avg_metrics['noise_f1']:.4f}")
-    print(f"Noise IoU: {avg_metrics['iou_noise']:.4f}")
-    print(f"\n--- Clean Point Detection ---")
-    print(f"Clean Precision: {avg_metrics['clean_precision']:.4f}")
-    print(f"Clean Recall: {avg_metrics['clean_recall']:.4f}")
-    print(f"Clean F1-Score: {avg_metrics['clean_f1']:.4f}")
-    print(f"Clean IoU: {avg_metrics['iou_clean']:.4f}")
-
-    # シーケンスごとの混同行列（任意で表示したい場合はここを有効化）
-    # print("\n--- Per-Sequence Confusion Matrix ---")
-    # for seq in sorted(sequence_metrics.keys()):
-    #     cm_seq = sequence_cm[seq]
-    #     print(f"\nSequence {seq}:")
-    #     print("          Predicted")
-    #     print("          Noise    Clean")
-    #     print("Actual Noise   {:6d}   {:6d}".format(cm_seq[0,0], cm_seq[0,1]))
-    #     print("      Clean   {:6d}   {:6d}".format(cm_seq[1,0], cm_seq[1,1]))
-
-    # ここ以降は元のコードと同じ（Per-Sequence Metrics表示 → JSON保存）
-    print("\n--- Per-Sequence Metrics ---")
-    for seq in sorted(sequence_metrics.keys()):
-        seq_data = sequence_metrics[seq]
-        seq_avg = {
-            k: np.mean([m[k] for m in seq_data])
-            for k in ["accuracy", "noise_detection_rate", "noise_f1"]
-        }
-        print(
-            f"Sequence {seq}: Acc={seq_avg['accuracy']:.4f}, "
-            f"Noise Detection Rate={seq_avg['noise_detection_rate']:.4f}, "
-            f"Noise F1={seq_avg['noise_f1']:.4f}"
-        )
-
-    print("=" * 70)
-
-    # JSON保存（混同行列も追加）
-    results = {
-        "overall_metrics": avg_metrics,
-        "overall_confusion_matrix": total_cm.tolist(),
-        "per_sequence_metrics": {
-            str(seq): {
-                k: float(np.mean([m[k] for m in data]))
-                for k in all_metrics[0].keys()
-                if isinstance(all_metrics[0][k], (int, float))
-            }
-            for seq, data in sequence_metrics.items()
-        },
-        "per_sequence_confusion_matrix": {
-            str(seq): cm.tolist() for seq, cm in sequence_cm.items()
-        },
-        "config": vars(args),
+    # Save results
+    search_results = {
+        "best_k": best_params[0],
+        "best_weights": best_params[1],
+        "best_noise_f1": best_f1,
+        "all_results": results
     }
+    with open(os.path.join(output_dir, "knn_hyperparameter_search.json"), "w") as f:
+        json.dump(search_results, f, indent=2)
 
-    with open(os.path.join(output_dir, "evaluation_results.json"), "w") as f:
-        json.dump(results, f, indent=2)
+    print(f"\nSearch results saved to {output_dir}/knn_hyperparameter_search.json")
 
-    print(f"\nResults saved to {output_dir}/evaluation_results.json")
-
-    return avg_metrics, sequence_metrics
+    return best_params, best_metrics
 
 
+def back_project_with_knn_weighted(
+    pred_img, proj_xyz, proj_idx, proj_mask, original_points, k=5, weights='uniform'
+):
+    """
+    weights対応版のKNNバックプロジェクション
+    weights: 'uniform' or 'distance'
+    """
+    num_points = len(original_points)
+    point_labels = np.ones(num_points, dtype=np.int32)
+    mapped_mask = np.zeros(num_points, dtype=bool)
+
+    # Direct mapping
+    for i in range(pred_img.shape[0]):
+        for j in range(pred_img.shape[1]):
+            if proj_mask[i, j] > 0:
+                point_idx = proj_idx[i, j]
+                if 0 <= point_idx < num_points:
+                    point_labels[point_idx] = pred_img[i, j]
+                    mapped_mask[point_idx] = True
+
+    unmapped_indices = np.where(~mapped_mask)[0]
+    if len(unmapped_indices) == 0:
+        return point_labels
+
+    mapped_indices = np.where(mapped_mask)[0]
+    mapped_points = original_points[mapped_indices]
+    mapped_labels = point_labels[mapped_indices]
+
+    kdtree = KDTree(mapped_points)
+    unmapped_points = original_points[unmapped_indices]
+    k = min(k, len(mapped_points))
+    distances, indices = kdtree.query(unmapped_points, k=k)
+
+    for i, unmapped_idx in enumerate(unmapped_indices):
+        neighbor_labels = mapped_labels[indices[i]]
+        neighbor_dists = distances[i]
+
+        if weights == 'uniform':
+            voted = np.bincount(neighbor_labels).argmax()
+        elif weights == 'distance':
+            # 距離の逆数で重み付け（ゼロ除算回避）
+            inv_dists = 1.0 / (neighbor_dists + 1e-8)
+            weights_sum = inv_dists.sum()
+            prob_class_0 = (inv_dists[neighbor_labels == 0].sum()) / weights_sum
+            prob_class_1 = (inv_dists[neighbor_labels == 1].sum()) / weights_sum
+            voted = 0 if prob_class_0 > prob_class_1 else 1
+        else:
+            raise ValueError("weights must be 'uniform' or 'distance'")
+
+        point_labels[unmapped_idx] = voted
+
+    return point_labels
+
+
+# main関数を修正
 def main(args):
-    # Device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
-    # Output directory
     os.makedirs(args.output_dir, exist_ok=True)
 
     # Load model
-    print("Loading U-Net model...")
     model = UNetDenoiser(
-        in_channels=5,
-        num_classes=2,
-        base_channels=args.base_channels,
-        bilinear=args.bilinear,
+        in_channels=5, num_classes=2,
+        base_channels=args.base_channels, bilinear=args.bilinear
     ).to(device)
 
     checkpoint = torch.load(args.checkpoint, map_location=device, weights_only=False)
     model.load_state_dict(checkpoint["model_state_dict"])
-    print(f"Loaded checkpoint from epoch {checkpoint.get('epoch', 'unknown')}")
 
-    # Load test dataset
-    print("Loading test dataset...")
+    # Load splits
     with open(args.splits_json, "r") as f:
         splits = json.load(f)
 
-    test_dataset = WADSDataset(
-        args.data_root,
-        splits["test"],
-        proj_H=args.proj_h,
-        proj_W=args.proj_w,
-        fov_up=args.fov_up,
-        fov_down=args.fov_down,
+    # 検証用データセットを作成（ここではval_splitを使用、なければtestの半分などでも可）
+    if "val" in splits and len(splits["val"]) > 0:
+        val_split = splits["val"]
+        print(f"Using validation split with {len(val_split)} samples")
+    else:
+        # valがなければtestの先頭20%を検証用に
+        val_split = splits["test"][:max(1, len(splits["test"]) // 5)]
+        print(f"No val split found. Using {len(val_split)} samples from test as validation")
+
+    val_dataset = WADSDataset(
+        args.data_root, val_split,
+        proj_H=args.proj_h, proj_W=args.proj_w,
+        fov_up=args.fov_up, fov_down=args.fov_down,
         noise_label=args.noise_label,
     )
 
-    print(f"Test dataset size: {len(test_dataset)}")
+    # === ハイパーパラメータ探索実行 ===
+    best_k, best_weights = evaluate_with_knn_params(
+        model, val_dataset, device, args, args.output_dir,
+        k_values=[3, 5, 7, 9, 11, 15],
+        weight_options=['uniform', 'distance']
+    )[0]
 
-    # Evaluate
-    avg_metrics, seq_metrics = evaluate_test_set(
-        model, test_dataset, device, args, args.output_dir
-    )
+    print(f"\nRecommended KNN parameters: k={best_k}, weights='{best_weights}'")
+    print("You can now run evaluation on full test set with these parameters.")
 
-    print("\nEvaluation completed!")
-
+    # 必要なら、ベストパラメータでテストセット全体を再評価するコードも追加可能
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
@@ -423,7 +441,7 @@ if __name__ == "__main__":
         help="Use KNN for unmapped points",
     )
     parser.add_argument(
-        "--knn_k", type=int, default=3, help="Number of nearest neighbors for KNN"
+        "--knn_k", type=int, default=5, help="Number of nearest neighbors for KNN"
     )
 
     # Output

@@ -370,6 +370,8 @@ def main(args):
 
     # Training loop
     best_val_f1 = 0.0
+    patience_counter = 0                     # ← 新規追加
+    early_stop = (args.early_stop_patience > 0)  # patienceが正の値なら有効
 
     for epoch in range(1, args.epochs + 1):
         print(f"\nEpoch {epoch}/{args.epochs}")
@@ -418,19 +420,16 @@ def main(args):
         for key, value in val_metrics.items():
             writer.add_scalar(f"Val/{key}", value, epoch)
 
-        # Print metrics (コンソール出力)
+        # Print metrics
         print(f"Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f}")
-        print(
-            f"Train Acc: {train_metrics['accuracy']:.4f} | Val Acc: {val_metrics['accuracy']:.4f}"
-        )
+        print(f"Train Acc: {train_metrics['accuracy']:.4f} | Val Acc: {val_metrics['accuracy']:.4f}")
         print(f"Train F1: {train_metrics['f1']:.4f} | Val F1: {val_metrics['f1']:.4f}")
-        print(
-            f"Val IoU (noise/clean): {val_metrics['iou_noise']:.4f} / {val_metrics['iou_clean']:.4f}"
-        )
+        print(f"Val IoU (noise/clean): {val_metrics['iou_noise']:.4f} / {val_metrics['iou_clean']:.4f}")
 
-        # Save best model
-        if val_metrics["f1"] > best_val_f1:
+        # ===== Early Stopping & Best Model Save =====
+        if val_metrics["f1"] > best_val_f1 + args.early_stop_delta:
             best_val_f1 = val_metrics["f1"]
+            patience_counter = 0
             torch.save(
                 {
                     "epoch": epoch,
@@ -442,8 +441,18 @@ def main(args):
                 os.path.join(args.output_dir, "best_model.pth"),
             )
             print(f"Saved best model with F1: {best_val_f1:.4f}")
+        else:
+            patience_counter += 1
+            print(f"No improvement in Val F1 for {patience_counter} epoch(s)")
 
-        # Save checkpoint
+        # Early Stopping check
+        if early_stop and patience_counter >= args.early_stop_patience:
+            print(f"\n=== Early Stopping triggered after epoch {epoch} ===")
+            print(f"No Val F1 improvement for {args.early_stop_patience} consecutive epochs.")
+            print(f"Best Validation F1: {best_val_f1:.4f}")
+            break
+
+        # Save checkpoint (定期保存)
         if epoch % args.save_interval == 0:
             torch.save(
                 {
@@ -454,11 +463,15 @@ def main(args):
                 os.path.join(args.output_dir, f"checkpoint_epoch_{epoch}.pth"),
             )
 
-    # Plot and save training curves
+    # 訓練終了後の処理
     plot_training_curves(history, args.output_dir)
-
     writer.close()
-    print(f"\nTraining completed! Best Val F1: {best_val_f1:.4f}")
+
+    if early_stop and patience_counter >= args.early_stop_patience:
+        print(f"\nTraining stopped early at epoch {epoch}. Best Val F1: {best_val_f1:.4f}")
+    else:
+        print(f"\nTraining completed all {args.epochs} epochs! Best Val F1: {best_val_f1:.4f}")
+
     print(f"Training log saved to: {log_file}")
 
 
@@ -516,6 +529,16 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--save_interval", type=int, default=10, help="Save checkpoint every N epochs"
+    )
+
+    # argparse に Early Stopping の引数を追加（parserの最後に追加してください）
+    parser.add_argument(
+        "--early_stop_patience", type=int, default=15,
+        help="Early stopping patience (epochs without Val F1 improvement). Set to -1 or 0 to disable."
+    )
+    parser.add_argument(
+        "--early_stop_delta", type=float, default=0.0001,
+        help="Minimum improvement in Val F1 to consider as improvement"
     )
 
     args = parser.parse_args()
