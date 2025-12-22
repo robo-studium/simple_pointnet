@@ -1,4 +1,5 @@
 WADS/
+wads/
 checkpoints_pointnet++/
 results_pointnet++/
 simple_pointnet.code-workspace

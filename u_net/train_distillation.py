@@ -529,8 +529,8 @@ if __name__ == "__main__":
     )
     
     # Data
-    parser.add_argument("--data_root", type=str, default="./WADS/wads")
-    parser.add_argument("--splits_json", type=str, default="./splits.json")
+    parser.add_argument("--data_root", type=str, default="../wads")
+    parser.add_argument("--splits_json", type=str, default="../splits.json")
     parser.add_argument("--noise_label", type=int, default=110)
     parser.add_argument("--proj_h", type=int, default=64)
     parser.add_argument("--proj_w", type=int, default=1024)
