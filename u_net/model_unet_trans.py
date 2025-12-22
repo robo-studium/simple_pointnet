@@ -140,6 +140,7 @@ class UNetDenoiser(nn.Module):
         attn_heads=4,
     ):
         super().__init__()
+        self.base_channels=base_channels
 
         self.inc = DoubleConv(in_channels, base_channels)
         self.down1 = Down(base_channels, base_channels * 2)

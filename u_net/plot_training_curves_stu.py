@@ -3,6 +3,7 @@ import os
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
+from matplotlib.ticker import FormatStrFormatter
 
 
 def plot_training_curves(csv_path, output_dir=None, dpi=300):
@@ -33,22 +34,69 @@ def plot_training_curves(csv_path, output_dir=None, dpi=300):
     
     epochs = df['epoch']
     
-    # 1. Loss
+    # 1. Total Loss
     fig, ax = plt.subplots(figsize=(10, 6))
-    ax.plot(epochs, df['train_loss'], 'b-', label='Train', linewidth=2, marker='o', markersize=4)
-    ax.plot(epochs, df['val_loss'], 'r-', label='Val', linewidth=2, marker='s', markersize=4)
+    ax.plot(epochs, df['train_total_loss'], 'b-', label='Train', linewidth=2, marker='o', markersize=4)
+    ax.plot(epochs, df['val_total_loss'], 'r-', label='Val', linewidth=2, marker='s', markersize=4)
+    ax.xaxis.set_major_formatter(FormatStrFormatter('%.0f'))
+
     ax.set_xlabel('Epoch', fontsize=12)
-    ax.set_ylabel('Loss', fontsize=12)
-    ax.set_title('Loss', fontsize=14, fontweight='bold')
+    ax.set_ylabel('Total Loss', fontsize=12)
+    ax.set_title('Total Loss', fontsize=14, fontweight='bold')
     ax.legend(fontsize=11)
     ax.grid(True, alpha=0.3)
     plt.tight_layout()
-    save_path = os.path.join(output_dir, 'loss.png')
+    save_path = os.path.join(output_dir, 'total_loss.png')
     plt.savefig(save_path, dpi=dpi, bbox_inches='tight')
-    print(f"Loss plot saved to: {save_path}")
+    print(f"Total Loss plot saved to: {save_path}")
     plt.close()
     
-    # 2. Accuracy
+    # 2. Task Loss
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax.plot(epochs, df['train_task_loss'], 'b-', label='Train', linewidth=2, marker='o', markersize=4)
+    ax.plot(epochs, df['val_task_loss'], 'r-', label='Val', linewidth=2, marker='s', markersize=4)
+    ax.set_xlabel('Epoch', fontsize=12)
+    ax.set_ylabel('Task Loss', fontsize=12)
+    ax.set_title('Task Loss', fontsize=14, fontweight='bold')
+    ax.legend(fontsize=11)
+    ax.grid(True, alpha=0.3)
+    plt.tight_layout()
+    save_path = os.path.join(output_dir, 'task_loss.png')
+    plt.savefig(save_path, dpi=dpi, bbox_inches='tight')
+    print(f"Task Loss plot saved to: {save_path}")
+    plt.close()
+    
+    # 3. Distillation Loss
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax.plot(epochs, df['train_distill_loss'], 'b-', label='Train', linewidth=2, marker='o', markersize=4)
+    ax.plot(epochs, df['val_distill_loss'], 'r-', label='Val', linewidth=2, marker='s', markersize=4)
+    ax.set_xlabel('Epoch', fontsize=12)
+    ax.set_ylabel('Distillation Loss', fontsize=12)
+    ax.set_title('Distillation Loss', fontsize=14, fontweight='bold')
+    ax.legend(fontsize=11)
+    ax.grid(True, alpha=0.3)
+    plt.tight_layout()
+    save_path = os.path.join(output_dir, 'distill_loss.png')
+    plt.savefig(save_path, dpi=dpi, bbox_inches='tight')
+    print(f"Distillation Loss plot saved to: {save_path}")
+    plt.close()
+    
+    # 4. Feature Loss
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax.plot(epochs, df['train_feature_loss'], 'b-', label='Train', linewidth=2, marker='o', markersize=4)
+    ax.plot(epochs, df['val_feature_loss'], 'r-', label='Val', linewidth=2, marker='s', markersize=4)
+    ax.set_xlabel('Epoch', fontsize=12)
+    ax.set_ylabel('Feature Loss', fontsize=12)
+    ax.set_title('Feature Loss', fontsize=14, fontweight='bold')
+    ax.legend(fontsize=11)
+    ax.grid(True, alpha=0.3)
+    plt.tight_layout()
+    save_path = os.path.join(output_dir, 'feature_loss.png')
+    plt.savefig(save_path, dpi=dpi, bbox_inches='tight')
+    print(f"Feature Loss plot saved to: {save_path}")
+    plt.close()
+    
+    # 5. Accuracy
     fig, ax = plt.subplots(figsize=(10, 6))
     ax.plot(epochs, df['train_accuracy'], 'b-', label='Train', linewidth=2, marker='o', markersize=4)
     ax.plot(epochs, df['val_accuracy'], 'r-', label='Val', linewidth=2, marker='s', markersize=4)
@@ -64,7 +112,7 @@ def plot_training_curves(csv_path, output_dir=None, dpi=300):
     print(f"Accuracy plot saved to: {save_path}")
     plt.close()
     
-    # 3. F1 Score
+    # 6. F1 Score
     fig, ax = plt.subplots(figsize=(10, 6))
     ax.plot(epochs, df['train_f1'], 'b-', label='Train', linewidth=2, marker='o', markersize=4)
     ax.plot(epochs, df['val_f1'], 'r-', label='Val', linewidth=2, marker='s', markersize=4)
@@ -80,7 +128,7 @@ def plot_training_curves(csv_path, output_dir=None, dpi=300):
     print(f"F1 Score plot saved to: {save_path}")
     plt.close()
     
-    # 4. Precision
+    # 7. Precision
     fig, ax = plt.subplots(figsize=(10, 6))
     ax.plot(epochs, df['train_precision'], 'b-', label='Train', linewidth=2, marker='o', markersize=4)
     ax.plot(epochs, df['val_precision'], 'r-', label='Val', linewidth=2, marker='s', markersize=4)
@@ -96,7 +144,7 @@ def plot_training_curves(csv_path, output_dir=None, dpi=300):
     print(f"Precision plot saved to: {save_path}")
     plt.close()
     
-    # 5. Recall
+    # 8. Recall
     fig, ax = plt.subplots(figsize=(10, 6))
     ax.plot(epochs, df['train_recall'], 'b-', label='Train', linewidth=2, marker='o', markersize=4)
     ax.plot(epochs, df['val_recall'], 'r-', label='Val', linewidth=2, marker='s', markersize=4)
@@ -112,14 +160,16 @@ def plot_training_curves(csv_path, output_dir=None, dpi=300):
     print(f"Recall plot saved to: {save_path}")
     plt.close()
     
-    # 6. IoU (Validation only)
+    # 9. IoU (Train & Val)
     fig, ax = plt.subplots(figsize=(10, 6))
-    ax.plot(epochs, df['val_iou_noise'], 'g-', label='IoU Noise', linewidth=2, marker='o', markersize=4)
-    ax.plot(epochs, df['val_iou_clean'], 'orange', label='IoU Clean', linewidth=2, marker='s', markersize=4)
+    ax.plot(epochs, df['train_iou_noise'], 'b-', label='Train IoU Noise', linewidth=2, marker='o', markersize=4)
+    ax.plot(epochs, df['train_iou_clean'], 'c-', label='Train IoU Clean', linewidth=2, marker='^', markersize=4)
+    ax.plot(epochs, df['val_iou_noise'], 'r-', label='Val IoU Noise', linewidth=2, marker='s', markersize=4)
+    ax.plot(epochs, df['val_iou_clean'], 'orange', label='Val IoU Clean', linewidth=2, marker='D', markersize=4)
     ax.set_xlabel('Epoch', fontsize=12)
     ax.set_ylabel('IoU', fontsize=12)
-    ax.set_title('Validation IoU', fontsize=14, fontweight='bold')
-    ax.legend(fontsize=11)
+    ax.set_title('IoU (Noise & Clean)', fontsize=14, fontweight='bold')
+    ax.legend(fontsize=10)
     ax.grid(True, alpha=0.3)
     ax.set_ylim([0, 1])
     plt.tight_layout()
@@ -128,7 +178,7 @@ def plot_training_curves(csv_path, output_dir=None, dpi=300):
     print(f"IoU plot saved to: {save_path}")
     plt.close()
     
-    # 7. Learning Rate
+    # 10. Learning Rate
     if 'lr' in df.columns:
         fig, ax = plt.subplots(figsize=(10, 6))
         ax.plot(epochs, df['lr'], 'purple', linewidth=2, marker='o', markersize=4)
@@ -143,32 +193,36 @@ def plot_training_curves(csv_path, output_dir=None, dpi=300):
         print(f"Learning rate plot saved to: {lr_save_path}")
         plt.close()
     
-    # 8. Loss の拡大図 (最初の数エポックを除外)
+    # 11. Total Loss の拡大図 (最初の数エポックを除外)
     if len(df) > 10:
         fig, ax = plt.subplots(figsize=(10, 6))
         skip_epochs = 5  # 最初の5エポックをスキップ
-        ax.plot(epochs[skip_epochs:], df['train_loss'][skip_epochs:], 'b-', 
+        ax.plot(epochs[skip_epochs:], df['train_total_loss'][skip_epochs:], 'b-', 
                 label='Train', linewidth=2, marker='o', markersize=4)
-        ax.plot(epochs[skip_epochs:], df['val_loss'][skip_epochs:], 'r-', 
+        ax.plot(epochs[skip_epochs:], df['val_total_loss'][skip_epochs:], 'r-', 
                 label='Val', linewidth=2, marker='s', markersize=4)
         ax.set_xlabel('Epoch', fontsize=12)
-        ax.set_ylabel('Loss', fontsize=12)
-        ax.set_title(f'Loss (from Epoch {skip_epochs+1})', fontsize=14, fontweight='bold')
+        ax.set_ylabel('Total Loss', fontsize=12)
+        ax.set_title(f'Total Loss (from Epoch {skip_epochs+1})', fontsize=14, fontweight='bold')
         ax.legend(fontsize=11)
         ax.grid(True, alpha=0.3)
         plt.tight_layout()
-        loss_zoom_path = os.path.join(output_dir, 'loss_zoom.png')
+        loss_zoom_path = os.path.join(output_dir, 'total_loss_zoom.png')
         plt.savefig(loss_zoom_path, dpi=dpi, bbox_inches='tight')
-        print(f"Zoomed loss plot saved to: {loss_zoom_path}")
+        print(f"Zoomed total loss plot saved to: {loss_zoom_path}")
         plt.close()
     
     # 統計情報の出力
     print("\n=== Training Statistics ===")
     print(f"Best Validation F1: {df['val_f1'].max():.4f} at epoch {df.loc[df['val_f1'].idxmax(), 'epoch']:.0f}")
     print(f"Best Validation Accuracy: {df['val_accuracy'].max():.4f} at epoch {df.loc[df['val_accuracy'].idxmax(), 'epoch']:.0f}")
-    print(f"Lowest Validation Loss: {df['val_loss'].min():.4f} at epoch {df.loc[df['val_loss'].idxmin(), 'epoch']:.0f}")
+    print(f"Lowest Validation Total Loss: {df['val_total_loss'].min():.4f} at epoch {df.loc[df['val_total_loss'].idxmin(), 'epoch']:.0f}")
+    print(f"Best Validation IoU Noise: {df['val_iou_noise'].max():.4f} at epoch {df.loc[df['val_iou_noise'].idxmax(), 'epoch']:.0f}")
+    print(f"Best Validation IoU Clean: {df['val_iou_clean'].max():.4f} at epoch {df.loc[df['val_iou_clean'].idxmax(), 'epoch']:.0f}")
     print(f"Final Validation F1: {df['val_f1'].iloc[-1]:.4f}")
     print(f"Final Validation Accuracy: {df['val_accuracy'].iloc[-1]:.4f}")
+    print(f"Final Validation IoU Noise: {df['val_iou_noise'].iloc[-1]:.4f}")
+    print(f"Final Validation IoU Clean: {df['val_iou_clean'].iloc[-1]:.4f}")
 
 
 def main():
@@ -176,7 +230,7 @@ def main():
     parser.add_argument(
         '--csv_path',
         type=str,
-        default='./outputs2/training_log.csv',
+        default='./outputs_student/distillation_log.csv',
         help='Path to training_log.csv'
     )
     parser.add_argument(

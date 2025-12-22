@@ -8,7 +8,7 @@ import torch
 from tqdm import tqdm
 
 from data_loader import VelodyneRangeProjection, create_dataloaders
-from model_unet_trans import UNetDenoiser
+from student_model import StudentUNet
 
 
 def visualize_prediction(input_img, label_img, pred_img, mask, save_path=None):
@@ -62,7 +62,7 @@ def visualize_prediction(input_img, label_img, pred_img, mask, save_path=None):
 
     # Plot prediction
     im4 = axes[1, 1].imshow(pred_vis, cmap="RdYlGn", vmin=0, vmax=1)
-    axes[1, 1].set_title("Prediction (0=Noise, 1=Clean)", fontsize=14)
+    axes[1, 1].set_title("Student Prediction (0=Noise, 1=Clean)", fontsize=14)
     axes[1, 1].set_xlabel("Yaw")
     axes[1, 1].set_ylabel("Laser ID")
     plt.colorbar(im4, ax=axes[1, 1])
@@ -116,9 +116,8 @@ def save_denoised_pointcloud(input_path, pred_mask, proj_idx, output_path):
     print(f"Removed {len(points) - len(denoised_points)} noise points")
 
 
-
 def evaluate_model(model, dataloader, device, output_dir, save_visualizations=True):
-    """Evaluate model on dataset"""
+    """Evaluate student model on dataset"""
     model.eval()
 
     os.makedirs(output_dir, exist_ok=True)
@@ -127,11 +126,11 @@ def evaluate_model(model, dataloader, device, output_dir, save_visualizations=Tr
 
     all_metrics = []
 
-    # 混同行列用の累積変数
+    # Confusion matrix accumulators
     total_tp = total_tn = total_fp = total_fn = 0
 
     with torch.no_grad():
-        pbar = tqdm(dataloader, desc="Inference")
+        pbar = tqdm(dataloader, desc="Student Inference")
 
         for i, batch in enumerate(pbar):
             inputs = batch["input"].to(device)
@@ -164,7 +163,7 @@ def evaluate_model(model, dataloader, device, output_dir, save_visualizations=Tr
                     fp = ((pred_flat == 1) & (label_flat == 0)).sum()
                     fn = ((pred_flat == 0) & (label_flat == 1)).sum()
 
-                    # 全体の混同行列に累積
+                    # Accumulate for overall confusion matrix
                     total_tp += tp
                     total_tn += tn
                     total_fp += fp
@@ -200,7 +199,7 @@ def evaluate_model(model, dataloader, device, output_dir, save_visualizations=Tr
 
                     # Save visualization
                     if save_visualizations and i < 10:
-                        vis_path = os.path.join(vis_dir, f"sample_{i:04d}_{b:02d}.png")
+                        vis_path = os.path.join(vis_dir, f"student_sample_{i:04d}_{b:02d}.png")
                         visualize_prediction(
                             inputs[b], labels[b], preds[b], masks[b], save_path=vis_path
                         )
@@ -211,16 +210,16 @@ def evaluate_model(model, dataloader, device, output_dir, save_visualizations=Tr
         for key in all_metrics[0].keys():
             avg_metrics[key] = np.mean([m[key] for m in all_metrics])
 
-        # === 混同行列の出力 ===
+        # Confusion matrix output
         total_pixels = total_tp + total_tn + total_fp + total_fn
         confusion_matrix = np.array([[total_tn, total_fp],
                                      [total_fn, total_tp]])
 
-        # 正規化版（行方向＝実際のクラスに対する正解率）
+        # Normalized version (row-wise: accuracy per actual class)
         confusion_matrix_norm = confusion_matrix.astype('float') / (confusion_matrix.sum(axis=1)[:, np.newaxis] + 1e-6)
 
         print("\n" + "=" * 60)
-        print("Evaluation Results")
+        print("Student Model Evaluation Results")
         print("=" * 60)
         print(f"Total valid pixels: {total_pixels:,}")
         print("\nConfusion Matrix (Noise=0, Clean=1):")
@@ -252,8 +251,10 @@ def evaluate_model(model, dataloader, device, output_dir, save_visualizations=Tr
         print(f"Avg GT Clean:        {avg_metrics['label_clean']:.0f}")
         print("=" * 60)
 
-        # メトリクス保存（混同行列も追加）
-        with open(os.path.join(output_dir, "metrics.txt"), "w") as f:
+        # Save metrics
+        with open(os.path.join(output_dir, "student_metrics.txt"), "w") as f:
+            f.write("Student Model Evaluation\n")
+            f.write("=" * 60 + "\n\n")
             f.write("Confusion Matrix:\n")
             f.write(f"TN: {total_tn}\n")
             f.write(f"FP: {total_fp}\n")
@@ -266,9 +267,10 @@ def evaluate_model(model, dataloader, device, output_dir, save_visualizations=Tr
 
     return None
 
+
 def inference_single_file(model, bin_path, device, args, save_output=True):
-    """Run inference on a single .bin file"""
-    print(f"\nProcessing: {bin_path}")
+    """Run inference on a single .bin file using student model"""
+    print(f"\nProcessing with Student Model: {bin_path}")
 
     # Create projector
     projector = VelodyneRangeProjection(
@@ -320,7 +322,7 @@ def inference_single_file(model, bin_path, device, args, save_output=True):
 
     # Save denoised point cloud
     if save_output:
-        output_path = bin_path.replace(".bin", "_denoised.bin")
+        output_path = bin_path.replace(".bin", "_student_denoised.bin")
         save_denoised_pointcloud(bin_path, preds.cpu().numpy(), proj_idx, output_path)
 
     return preds, proj_mask, input_img
@@ -331,19 +333,25 @@ def main(args):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
-    # Load model
-    print("Loading U-Net model...")
-    model = UNetDenoiser(
+    # Load student model
+    print("Loading Student U-Net model...")
+    model = StudentUNet(
         in_channels=5,
         num_classes=2,
         base_channels=args.base_channels,
-        bilinear=args.bilinear,
     ).to(device)
+
+    # Model info
+    total_params = sum(p.numel() for p in model.parameters())
+    print(f"Student model parameters: {total_params:,} ({total_params/1e6:.2f}M)")
 
     # Load checkpoint
     checkpoint = torch.load(args.checkpoint, map_location=device, weights_only=False)
     model.load_state_dict(checkpoint["model_state_dict"])
     print(f"Loaded checkpoint from epoch {checkpoint.get('epoch', 'unknown')}")
+    
+    if 'val_f1' in checkpoint:
+        print(f"Checkpoint validation F1: {checkpoint['val_f1']:.4f}")
 
     if args.mode == "eval":
         # Evaluate on test set
@@ -377,7 +385,7 @@ def main(args):
 
         # Visualize
         if args.save_vis:
-            vis_path = os.path.join(args.output_dir, "prediction.png")
+            vis_path = os.path.join(args.output_dir, "student_prediction.png")
             os.makedirs(args.output_dir, exist_ok=True)
 
             # Create dummy label (all clean) for visualization
@@ -390,11 +398,13 @@ def main(args):
                 save_path=vis_path,
             )
 
-    print("\nInference completed!")
+    print("\nStudent inference completed!")
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Inference for U-Net LiDAR denoising")
+    parser = argparse.ArgumentParser(
+        description="Inference for Student U-Net LiDAR denoising (Knowledge Distillation)"
+    )
 
     parser.add_argument(
         "--mode",
@@ -406,8 +416,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--checkpoint",
         type=str,
-        default="./outputs/best_model.pth",
-        help="Path to model checkpoint",
+        default="./outputs_student/best_student_model.pth",
+        help="Path to student model checkpoint",
     )
     parser.add_argument(
         "--input_file",
@@ -421,16 +431,14 @@ if __name__ == "__main__":
     parser.add_argument("--splits_json", type=str, default="./splits.json")
     parser.add_argument("--noise_label", type=int, default=110)
 
-    # Model (U-Net specific)
+    # Student Model
     parser.add_argument("--proj_h", type=int, default=64)
     parser.add_argument("--proj_w", type=int, default=1024)
     parser.add_argument(
-        "--base_channels", type=int, default=64, help="Base number of channels in U-Net"
-    )
-    parser.add_argument(
-        "--bilinear",
-        action="store_true",
-        help="Use bilinear upsampling instead of transposed conv",
+        "--base_channels", 
+        type=int, 
+        default=24, 
+        help="Base number of channels in Student U-Net (24 or 32 recommended)"
     )
     parser.add_argument("--fov_up", type=float, default=2.0)
     parser.add_argument("--fov_down", type=float, default=-24.9)
@@ -438,7 +446,7 @@ if __name__ == "__main__":
     # Inference
     parser.add_argument("--batch_size", type=int, default=4)
     parser.add_argument("--num_workers", type=int, default=4)
-    parser.add_argument("--output_dir", type=str, default="./inference_outputs")
+    parser.add_argument("--output_dir", type=str, default="./inference_student_outputs")
     parser.add_argument("--save_vis", action="store_true", help="Save visualizations")
 
     args = parser.parse_args()

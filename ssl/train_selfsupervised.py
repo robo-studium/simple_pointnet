@@ -7,8 +7,8 @@ import torch.optim as optim
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
-from model_selfsupervised import SelfSupervisedModel
-from data_loader_ssl import create_ssl_dataloaders
+from ssl.model_selfsupervised import SelfSupervisedModel
+from ssl.data_loader_ssl import create_ssl_dataloaders
 
 
 class MaskedL1Loss(nn.Module):
